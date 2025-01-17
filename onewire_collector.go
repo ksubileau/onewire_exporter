@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
+	"log/slog"
 	"os"
 	"regexp"
 	"strconv"
@@ -10,7 +11,7 @@ import (
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/common/log"
+	log "github.com/prometheus/common/promslog"
 )
 
 const prefix = "onewire_"
@@ -31,31 +32,32 @@ type Temp struct {
 }
 
 type onewireCollector struct {
+	logger *slog.Logger
 }
 
-func getTemperatureFromDevice(device os.FileInfo) Temp {
+func getTemperatureFromDevice(device os.FileInfo, logger *slog.Logger) Temp {
 	reg, err := regexp.Compile("[^0-9]+")
 	if err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
 	for i := 1; i <= 5; i++ {
 		content, err := ioutil.ReadFile("/sys/bus/w1/devices/" + device.Name() + "/w1_slave")
 		if err != nil {
-			log.Infof("Error reading device %s\n", device.Name())
+			logger.Infof("Error reading device %s\n", device.Name())
 			continue
 		}
 		lines := strings.Split(string(content), "\n")
 		if len(lines) != 3 {
-			log.Infof("Unknown format for device %s\n", device.Name())
+			logger.Infof("Unknown format for device %s\n", device.Name())
 			continue
 		}
 		if !strings.Contains(lines[0], "YES") {
-			log.Infof("CRC invalid for device %s\n", device.Name())
+			logger.Infof("CRC invalid for device %s\n", device.Name())
 			continue
 		}
 		data := strings.SplitAfter(lines[1], "t=")
 		if len(data) != 2 {
-			log.Infof("Temp value not found for device %s\n", device.Name())
+			logger.Infof("Temp value not found for device %s\n", device.Name())
 			continue
 		}
 		strValue := reg.ReplaceAllString(data[1], "")
@@ -75,7 +77,7 @@ func getTemperatureFromDevice(device os.FileInfo) Temp {
 	return Temp{}
 }
 
-func getTemperatures() ([]Temp, error) {
+func getTemperatures(logger *slog.Logger) ([]Temp, error) {
 	devices, err := ioutil.ReadDir("/sys/bus/w1/devices/")
 	if err != nil {
 		return nil, err
@@ -112,7 +114,7 @@ func (c onewireCollector) Describe(ch chan<- *prometheus.Desc) {
 }
 
 func (c onewireCollector) Collect(ch chan<- prometheus.Metric) {
-	values, err := getTemperatures()
+	values, err := getTemperatures(c.logger)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error getting sensor data", err)
 		ch <- prometheus.MustNewConstMetric(upDesc, prometheus.GaugeValue, 0)
@@ -121,7 +123,7 @@ func (c onewireCollector) Collect(ch chan<- prometheus.Metric) {
 			n := list.Names[sensor.ID]
 			if n == "" {
 				if *ignoreUnknown == true {
-					log.Infof("Ingoring unknown device %s\n", sensor.ID)
+					c.logger.Infof("Ingoring unknown device %s\n", sensor.ID)
 					continue
 				} else {
 					n = sensor.ID

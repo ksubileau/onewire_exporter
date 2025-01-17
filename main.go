@@ -4,13 +4,14 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/prometheus/common/log"
+	"github.com/prometheus/common/promslog"
 	yaml "gopkg.in/yaml.v2"
 )
 
@@ -39,7 +40,12 @@ func init() {
 }
 
 func main() {
+	promslogConfig := &promslog.Config{}
+	flag.StringVar(&promslogConfig.Level, "log.level", "info", "Log level (debug, info, warn, error)")
+	flag.StringVar(&promslogConfig.Format, "log.format", "json", "Log format (logfmt, json)")
 	flag.Parse()
+
+	logger := promslog.New(promslogConfig)
 
 	if *showVersion {
 		printVersion()
@@ -50,15 +56,15 @@ func main() {
 	yamlFile, err := ioutil.ReadFile(filename)
 
 	if err != nil {
-		log.Fatal("Can't read names file")
+		logger.Fatal("Can't read names file")
 	}
 
 	err = yaml.Unmarshal(yamlFile, &list)
 	if err != nil {
-		log.Fatal("Can't read names file")
+		logger.Fatal("Can't read names file")
 	}
 
-	startServer()
+	startServer(logger)
 }
 
 func printVersion() {
@@ -66,8 +72,8 @@ func printVersion() {
 	fmt.Printf("Version: %s\n", version)
 }
 
-func startServer() {
-	log.Infof("Starting onewire exporter (Version: %s)\n", version)
+func startServer(logger *slog.Logger) {
+	logger.Infof("Starting onewire exporter (Version: %s)\n", version)
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<html>
 			<head><title>onewire Exporter (Version ` + version + `)</title></head>
@@ -80,16 +86,23 @@ func startServer() {
 			</html>`))
 	})
 	http.HandleFunc(*metricsPath, handleMetricsRequest)
+	http.HandleFunc(*metricsPath, func(w http.ResponseWriter, r *http.Request) {
+		handleMetricsRequest(w, r, logger)
+	})
 
-	log.Infof("Listening for %s on %s\n", *metricsPath, *listenAddress)
-	log.Fatal(http.ListenAndServe(*listenAddress, nil))
+	logger.Infof("Listening for %s on %s\n", *metricsPath, *listenAddress)
+	logger.Fatal(http.ListenAndServe(*listenAddress, nil))
 }
 
-func handleMetricsRequest(w http.ResponseWriter, r *http.Request) {
-	reg := prometheus.NewRegistry()
-	reg.MustRegister(&onewireCollector{})
+func handleMetricsRequest(w http.ResponseWriter, r *http.Request, logger *slog.Logger) {
+	registry := prometheus.NewRegistry()
+	c := &onewireCollector{
+		logger: logger,
+	}
+	c := collector.New(r.Context(), target, authName, snmpContext, auth, nmodules, logger, exporterMetrics, *concurrency, debug)
 
-	promhttp.HandlerFor(reg, promhttp.HandlerOpts{
-		ErrorLog:      log.NewErrorLogger(),
-		ErrorHandling: promhttp.ContinueOnError}).ServeHTTP(w, r)
+	registry.MustRegister(c)
+
+	h := promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
+	h.ServeHTTP(w, r)
 }

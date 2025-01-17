@@ -35,7 +35,7 @@ jobs:
           GOARCH: ${{ matrix.platform.arch }}
         run: |
           go mod init ${GITHUB_REPOSITORY}
-          go mod tidy
+          go mod tidy -e
 
       - name: Build
         env:
