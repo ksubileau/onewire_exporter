@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
-	log "github.com/prometheus/common/promslog"
 )
 
 const prefix = "onewire_"
@@ -38,26 +37,28 @@ type onewireCollector struct {
 func getTemperatureFromDevice(device os.FileInfo, logger *slog.Logger) Temp {
 	reg, err := regexp.Compile("[^0-9-]+")
 	if err != nil {
-		logger.Fatal(err)
+		logger.Error("Error while compiling regex", "err", err)
+		os.Exit(1)
 	}
+
 	for i := 1; i <= 5; i++ {
-		content, err := ioutil.ReadFile("/sys/bus/w1/devices/" + device.Name() + "/w1_slave")
+		content, err := os.ReadFile("/sys/bus/w1/devices/" + device.Name() + "/w1_slave")
 		if err != nil {
-			logger.Infof("Error reading device %s\n", device.Name())
+			logger.Info(fmt.Sprintf("Error reading device %s\n", device.Name()))
 			continue
 		}
 		lines := strings.Split(string(content), "\n")
 		if len(lines) != 3 {
-			logger.Infof("Unknown format for device %s\n", device.Name())
+			logger.Info(fmt.Sprintf("Unknown format for device %s\n", device.Name()))
 			continue
 		}
 		if !strings.Contains(lines[0], "YES") {
-			logger.Infof("CRC invalid for device %s\n", device.Name())
+			logger.Info(fmt.Sprintf("CRC invalid for device %s\n", device.Name()))
 			continue
 		}
 		data := strings.SplitAfter(lines[1], "t=")
 		if len(data) != 2 {
-			logger.Infof("Temp value not found for device %s\n", device.Name())
+			logger.Info(fmt.Sprintf("Temp value not found for device %s\n", device.Name()))
 			continue
 		}
 		strValue := reg.ReplaceAllString(data[1], "")
@@ -91,7 +92,7 @@ func getTemperatures(logger *slog.Logger) ([]Temp, error) {
 		wg.Add(1)
 		go func(device os.FileInfo) {
 			defer wg.Done()
-			valueChan <- getTemperatureFromDevice(device)
+			valueChan <- getTemperatureFromDevice(device, logger)
 		}(device)
 	}
 	go func() {
@@ -123,7 +124,7 @@ func (c onewireCollector) Collect(ch chan<- prometheus.Metric) {
 			n := list.Names[sensor.ID]
 			if n == "" {
 				if *ignoreUnknown == true {
-					c.logger.Infof("Ingoring unknown device %s\n", sensor.ID)
+					c.logger.Info(fmt.Sprintf("Ingoring unknown device %s\n", sensor.ID))
 					continue
 				} else {
 					n = sensor.ID

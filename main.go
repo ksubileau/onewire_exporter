@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log/slog"
 	"net/http"
 	"os"
@@ -15,7 +14,7 @@ import (
 	yaml "gopkg.in/yaml.v2"
 )
 
-const version string = "0.1"
+const version string = "0.2"
 
 type List struct {
 	Names map[string]string
@@ -41,8 +40,6 @@ func init() {
 
 func main() {
 	promslogConfig := &promslog.Config{}
-	flag.StringVar(&promslogConfig.Level, "log.level", "info", "Log level (debug, info, warn, error)")
-	flag.StringVar(&promslogConfig.Format, "log.format", "json", "Log format (logfmt, json)")
 	flag.Parse()
 
 	logger := promslog.New(promslogConfig)
@@ -53,15 +50,17 @@ func main() {
 	}
 
 	filename, _ := filepath.Abs(*nameFile)
-	yamlFile, err := ioutil.ReadFile(filename)
+	yamlFile, err := os.ReadFile(filename)
 
 	if err != nil {
-		logger.Fatal("Can't read names file")
+		logger.Error("Can't read names file")
+		os.Exit(1)
 	}
 
 	err = yaml.Unmarshal(yamlFile, &list)
 	if err != nil {
-		logger.Fatal("Can't read names file")
+		logger.Error("Can't read names file")
+		os.Exit(1)
 	}
 
 	startServer(logger)
@@ -73,7 +72,7 @@ func printVersion() {
 }
 
 func startServer(logger *slog.Logger) {
-	logger.Infof("Starting onewire exporter (Version: %s)\n", version)
+	logger.Info(fmt.Sprintf("Starting onewire exporter (Version: %s)\n", version))
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<html>
 			<head><title>onewire Exporter (Version ` + version + `)</title></head>
@@ -85,13 +84,17 @@ func startServer(logger *slog.Logger) {
 			</body>
 			</html>`))
 	})
-	http.HandleFunc(*metricsPath, handleMetricsRequest)
+
 	http.HandleFunc(*metricsPath, func(w http.ResponseWriter, r *http.Request) {
 		handleMetricsRequest(w, r, logger)
 	})
 
-	logger.Infof("Listening for %s on %s\n", *metricsPath, *listenAddress)
-	logger.Fatal(http.ListenAndServe(*listenAddress, nil))
+	logger.Info(fmt.Sprintf("Listening for %s on %s\n", *metricsPath, *listenAddress))
+
+	if err := http.ListenAndServe(*listenAddress, nil); err != nil {
+		logger.Error("Error starting HTTP server", "err", err)
+		os.Exit(1)
+	}
 }
 
 func handleMetricsRequest(w http.ResponseWriter, r *http.Request, logger *slog.Logger) {
@@ -99,7 +102,6 @@ func handleMetricsRequest(w http.ResponseWriter, r *http.Request, logger *slog.L
 	c := &onewireCollector{
 		logger: logger,
 	}
-	c := collector.New(r.Context(), target, authName, snmpContext, auth, nmodules, logger, exporterMetrics, *concurrency, debug)
 
 	registry.MustRegister(c)
 
