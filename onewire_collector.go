@@ -36,7 +36,7 @@ type onewireCollector struct {
 }
 
 func getTemperatureFromDevice(device os.FileInfo, logger *slog.Logger) Temp {
-	reg, err := regexp.Compile("[^0-9]+")
+	reg, err := regexp.Compile("[^0-9-]+")
 	if err != nil {
 		logger.Fatal(err)
 	}
